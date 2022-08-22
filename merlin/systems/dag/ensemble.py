@@ -24,7 +24,7 @@ import tritonclient.grpc.model_config_pb2 as model_config  # noqa
 from google.protobuf import text_format  # noqa
 
 from merlin.dag import Graph  # noqa
-from merlin.systems.triton.export import _convert_dtype  # noqa
+from merlin.systems.dag.ops.operator import _add_model_param  # noqa
 
 
 class Ensemble:
@@ -64,19 +64,11 @@ class Ensemble:
             # max_batch_size=configs[0].max_batch_size
         )
 
-        for col_name, col_schema in self.graph.input_schema.column_schemas.items():
-            ensemble_config.input.append(
-                model_config.ModelInput(
-                    name=col_name, data_type=_convert_dtype(col_schema.dtype), dims=[-1, -1]
-                )
-            )
+        for _, col_schema in self.graph.input_schema.column_schemas.items():
+            _add_model_param(ensemble_config.input, model_config.ModelInput, col_schema)
 
-        for col_name, col_schema in self.graph.output_schema.column_schemas.items():
-            ensemble_config.output.append(
-                model_config.ModelOutput(
-                    name=col_name, data_type=_convert_dtype(col_schema.dtype), dims=[-1, -1]
-                )
-            )
+        for _, col_schema in self.graph.output_schema.column_schemas.items():
+            _add_model_param(ensemble_config.output, model_config.ModelOutput, col_schema)
 
         # Build node id lookup table
         postorder_nodes = list(postorder_iter_nodes(self.graph.output_node))
@@ -128,7 +120,7 @@ class Ensemble:
         os.makedirs(ensemble_path, exist_ok=True)
         os.makedirs(os.path.join(ensemble_path, str(version)), exist_ok=True)
 
-        with open(os.path.join(ensemble_path, "config.pbtxt"), "w") as o:
+        with open(os.path.join(ensemble_path, "config.pbtxt"), "w", encoding="utf-8") as o:
             text_format.PrintMessage(ensemble_config, o)
 
         return (ensemble_config, node_configs)

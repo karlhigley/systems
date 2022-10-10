@@ -210,3 +210,73 @@ def test_run_complex_dag_on_dataframe_with_dask_executor(tmpdir, dataset, engine
     dask_exec = DaskExecutor(transform_method="transform_batch")
     response = dask_exec.transform(ds.to_ddf(), [ensemble.graph.output_node])
     assert len(response["output"]) == df.shape[0]
+
+
+@pytest.mark.parametrize("engine", ["parquet"])
+def test_run_complex_dag_on_dataframe_with_ray_executor(tmpdir, dataset, engine):
+    # Create a Workflow
+    schema = dataset.schema
+    for name in ["x", "y", "id"]:
+        dataset.schema.column_schemas[name] = dataset.schema.column_schemas[name].with_tags(
+            [Tags.USER]
+        )
+    selector = ColumnSelector(["x", "y", "id"])
+
+    workflow_ops = selector >> wf_ops.Rename(postfix="_nvt")
+    workflow = Workflow(workflow_ops["x_nvt"])
+    workflow.fit(dataset)
+
+    # Create Tensorflow Model
+    model = tf.keras.models.Sequential(
+        [
+            tf.keras.Input(name="x_nvt", dtype=tf.float64, shape=(1,)),
+            tf.keras.layers.Dense(16, activation="relu"),
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dense(1, name="output"),
+        ]
+    )
+    model.compile(
+        optimizer="adam",
+        loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
+        metrics=[tf.metrics.SparseCategoricalAccuracy()],
+    )
+
+    op_chain = selector >> TransformWorkflow(workflow, cats=["x_nvt"]) >> PredictTensorflow(model)
+    merlin_ensemble = Ensemble(op_chain, schema)
+
+    # ds = Dataset(df)
+    # ray_exec = RayExecutor(transform_method="transform_batch")
+    # response = ray_exec.transform(ds.to_ddf().compute(), [ensemble.graph.output_node])
+    # assert len(response["output"]) == df.shape[0]
+
+    # Options for how to run on Ray:
+    # - batch (like Dask)
+    # - serving (like Triton)
+
+    from typing import Dict
+
+    import requests
+    from ray import serve
+    from starlette.requests import Request
+
+    @serve.deployment(route_prefix="/merlin_ensemble")
+    class MerlinEnsembleDeployment:
+        def __init__(self, ensemble: Ensemble):
+            self._ensemble = ensemble
+            self._executor = LocalExecutor(transform_method="transform_batch")
+
+        async def __call__(self, request: Request) -> Dict:
+            request_dict = await request.json()
+            df = pd.DataFrame(request_dict)
+            result = self._executor.transform(df, [self._ensemble.graph.output_node])
+            return result.to_dict(orient="list")
+
+    df_dict = {"x": [1.0, 2.0, 3.0], "y": [4.0, 5.0, 6.0], "id": [7, 8, 9]}
+    serve.run(MerlinEnsembleDeployment.bind(merlin_ensemble))
+    result = requests.post("http://localhost:8000/merlin_ensemble", json=df_dict)
+
+    result_json = result.json()
+    assert "output" in result_json
+    assert len(result_json['output']) == 3
+
+    assert result == "zebra"

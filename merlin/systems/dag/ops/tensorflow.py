@@ -68,8 +68,8 @@ class PredictTensorflow(PipelineableInferenceOperator):
 
             self.input_schema, self.output_schema = self._construct_schemas_from_model(self.model)
 
-    def __getstate__(self):
-        return {k: v for k, v in self.__dict__.items() if k != "model"}
+    # def __getstate__(self):
+    #     return {k: v for k, v in self.__dict__.items() if k != "model"}
 
     @property
     def tf_model_name(self):

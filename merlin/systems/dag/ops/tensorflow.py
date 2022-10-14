@@ -17,6 +17,10 @@ import os
 import pathlib
 import tempfile
 from shutil import copytree
+from typing import NamedTuple
+
+import cupy
+import numpy as np
 
 # this needs to be before any modules that import protobuf
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
@@ -31,6 +35,14 @@ from merlin.schema import ColumnSchema, Schema  # noqa
 from merlin.systems.dag.ops import compute_dims  # noqa
 from merlin.systems.dag.ops.compat import pb_utils  # noqa
 from merlin.systems.dag.ops.operator import PipelineableInferenceOperator, add_model_param  # noqa
+
+from opentelemetry import trace
+from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+TRACER = trace.get_tracer("instrumented_executor")
 
 
 class PredictTensorflow(PipelineableInferenceOperator):
@@ -82,6 +94,34 @@ class PredictTensorflow(PipelineableInferenceOperator):
             Triton model directory name
         """
         self._tf_model_name = tf_model_name
+
+    def transform_otel(self, col_selector: ColumnSelector, transformable: Transformable):
+        dict_arrays = {}
+        with TRACER.start_as_current_span("cupy_conversion"):
+            for col in transformable.columns:
+                dict_arrays[col] = cupy.asnumpy(transformable[col].values)
+        with TRACER.start_as_current_span("tf_prediction"):
+            outputs = self.model(dict_arrays, training=False)
+        with TRACER.start_as_current_span("conversion/return"):
+            return type(transformable)({"output": np.squeeze(outputs)})
+
+    def transform_batch(self, col_selector: ColumnSelector, transformable: Transformable):
+        def predict(df):
+            dict_arrays = {}
+            for col in df.columns:
+                dict_arrays[col] = cupy.asnumpy(df[col].values)
+            outputs = self.model(dict_arrays, training=False)
+            df[df.columns[0]] = np.squeeze(outputs)
+            df = df.rename({df.columns[0]: "output"})
+            return df
+            # return type(df)({"output": np.squeeze(outputs)})
+
+        class Output(NamedTuple):
+            output: float
+
+        output = transformable.transform(func=predict)
+
+        return output
 
     def transform(self, col_selector: ColumnSelector, transformable: Transformable):
         # TODO: Validate that the inputs match the schema

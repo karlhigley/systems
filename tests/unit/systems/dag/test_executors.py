@@ -20,13 +20,15 @@ import pandas as pd
 import pytest
 
 from merlin.core.dispatch import HAS_GPU, make_df
-from merlin.dag import DictArray
+from merlin.dag import DictArray, Graph
+from merlin.dag.base_operator import BaseOperator
 from merlin.dag.executors import DaskExecutor, LocalExecutor
 from merlin.io import Dataset
 from merlin.schema import ColumnSchema, Schema
 from merlin.systems.dag.ensemble import Ensemble
 from merlin.systems.dag.ops.session_filter import FilterCandidates
 from merlin.systems.triton.utils import run_ensemble_on_tritonserver
+from merlin.systems.dag.executors import InstrumentedExecutor
 
 TRITON_SERVER_PATH = find_executable("tritonserver")
 
@@ -164,3 +166,5 @@ def test_triton_executor_model(tmpdir):
     assert response is not None
     # assert isinstance(response, DictArray)
     assert len(response["filtered_ids"]) == 80
+
+

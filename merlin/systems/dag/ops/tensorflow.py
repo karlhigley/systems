@@ -77,8 +77,8 @@ class PredictTensorflow(PipelineableInferenceOperator):
 
             self.input_schema, self.output_schema = self._construct_schemas_from_model(self.model)
 
-    def __getstate__(self):
-        return {k: v for k, v in self.__dict__.items() if k != "model"}
+    # def __getstate__(self):
+    #     return {k: v for k, v in self.__dict__.items() if k != "model"}
 
     @property
     def tf_model_name(self):
@@ -106,22 +106,16 @@ class PredictTensorflow(PipelineableInferenceOperator):
             return type(transformable)({"output": np.squeeze(outputs)})
 
     def transform_batch(self, col_selector: ColumnSelector, transformable: Transformable):
-        def predict(df):
-            dict_arrays = {}
-            for col in df.columns:
-                dict_arrays[col] = cupy.asnumpy(df[col].values)
-            outputs = self.model(dict_arrays, training=False)
-            df[df.columns[0]] = np.squeeze(outputs)
-            df = df.rename({df.columns[0]: "output"})
-            return df
-            # return type(df)({"output": np.squeeze(outputs)})
+        dict_arrays = {}
+        for col in transformable.columns:
+            dict_arrays[col] = cupy.asnumpy(transformable[col].values)
+        outputs = self.model(dict_arrays, training=False)
+        outputs = np.squeeze(outputs).tolist()
+        if not isinstance(outputs, list):
+            outputs = [outputs]
 
-        class Output(NamedTuple):
-            output: float
-
-        output = transformable.transform(func=predict)
-
-        return output
+        return outputs
+        # return {"output": outputs}
 
     def transform(self, col_selector: ColumnSelector, transformable: Transformable):
         # TODO: Validate that the inputs match the schema

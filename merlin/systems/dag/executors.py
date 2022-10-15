@@ -76,8 +76,6 @@ class InstrumentedExecutor:
                 capture_dtypes=capture_dtypes,
             )
 
-
-
     def _transform_impl(
         self,
         transformable,
@@ -293,27 +291,6 @@ class BeamExecutor(LocalExecutor):
                 selection, input_data
             )
 
-            # # Update or validate output_data dtypes
-            # for col_name, output_col_schema in node.output_schema.column_schemas.items():
-            #     col_series = output_data[col_name]
-            #     col_dtype = col_series.dtype 
-            #     is_list = is_list_dtype(col_series)
-
-            #     if is_list:
-            #         col_dtype = list_val_dtype(col_series)
-            #     if hasattr(col_dtype, "as_numpy_dtype"):
-            #         col_dtype = col_dtype.as_numpy_dtype()
-            #     elif hasattr(col_series, "numpy"):
-            #         col_dtype = col_series[0].cpu().numpy().dtype
-
-            #     # col_dtype = convert_to_merlin_dtype(col_dtype)
-            #     output_data_schema = output_col_schema.with_dtype(
-            #         col_dtype, is_list=is_list, is_ragged=is_list
-            #     )
-
-            #     if capture_dtypes:
-            #         node.output_schema.column_schemas[col_name] = output_data_schema
-
         except Exception:
             LOG.exception("Failed to transform operator %s", node.op)
             raise
@@ -325,11 +302,8 @@ class BeamExecutor(LocalExecutor):
     def _combine_node_outputs(self, node, transformed_data, output):
         node_output_cols = _get_unique(node.output_schema.column_names)
 
-        # dask needs output to be in the same order defined as meta, reorder partitions here
-        # this also selects columns (handling the case of removing columns from the output using
-        # "-" overload)
         if output is None:
-            output = transformed_data[node_output_cols]
+            output = transformed_data
         else:
             output = concat_columns([output, transformed_data[node_output_cols]])
 

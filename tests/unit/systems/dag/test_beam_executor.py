@@ -43,7 +43,7 @@ from nvtabular import ops as wf_ops  # noqa
 
 
 @pytest.mark.parametrize("engine", ["parquet"])
-def test_run_complex_dag_on_dataframe_with_ray_executor(tmpdir, paths, dataset, engine):
+def test_run_dag_on_dataframe_with_beam(tmpdir, paths, dataset, engine):
     # Create a Workflow
     schema = dataset.schema
     for name in ["x", "y", "id"]:
@@ -55,6 +55,8 @@ def test_run_complex_dag_on_dataframe_with_ray_executor(tmpdir, paths, dataset, 
     workflow_ops = selector >> wf_ops.Rename(postfix="_nvt")
     workflow = Workflow(workflow_ops["x_nvt"])
     workflow.fit(dataset)
+
+    breakpoint()
 
     # Create Tensorflow Model
     model = tf.keras.models.Sequential(
@@ -74,9 +76,10 @@ def test_run_complex_dag_on_dataframe_with_ray_executor(tmpdir, paths, dataset, 
     op_chain = selector >> TransformWorkflow(workflow, cats=["x_nvt"]) >> PredictTensorflow(model)
     merlin_ensemble = Ensemble(op_chain, schema)
 
-    def systems_transform(df):
-        return BeamExecutor(transform_method="transform_batch").transform(df, [merlin_ensemble.graph.output_node])
-
+    def systems_transform(records):
+        df = pd.DataFrame.from_records(records)
+        result = BeamExecutor(transform_method="transform_batch").transform(df, [merlin_ensemble.graph.output_node])
+        return result
 
     class Record(NamedTuple):
         x: float
@@ -94,13 +97,15 @@ def test_run_complex_dag_on_dataframe_with_ray_executor(tmpdir, paths, dataset, 
     records = None
     with beam.Pipeline() as p:
         records = p | "Read" >> beam.io.ReadFromParquet(f"{directory}/*").with_output_types(Record) \
-                    | DataframeTransform(systems_transform) \
+                    | beam.BatchElements(min_batch_size=1000) \
+                    | beam.ParDo(systems_transform)
+                    # | DataframeTransform(systems_transform) \
                     # | beam.io.parquetio.WriteToParquet(f"{tmpdir}/output")
         _ = records | "Write" >> beam.io.textio.WriteToText(f"{tmpdir}/output")
 
     result = p.run()
     result.wait_until_finish()
-    breakpoint()
+
     # TODO: Assert that the output dir
 
     # ins_exec = InstrumentedExecutor(transform_method="transform_batch")
